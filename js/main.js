@@ -22,6 +22,13 @@ import {
   playCurtainOpen,
   playSwapTick,
 } from "./sound.js";
+import {
+  addScore,
+  renameEntry,
+  bestScore,
+  getLastName,
+  setLastName,
+} from "./leaderboard.js";
 
 // ---- 설정 ----
 const GAME_TIME = 40;      // 제한 시간(초)
@@ -80,7 +87,8 @@ let shuffleTimes = [], shuffleIdx = 0, qSinceLastShuffle = 0;
 let shuffleActive = false;      // 셔플 선택(입력) 단계인지
 let cellBox = {}, boxCell = {}; // 셀↔박스(home 방향) 매핑
 let homeCenter = {};            // 각 셀의 화면 중심 좌표
-let score = 0, hits = 0, attempts = 0, combo = 0;
+let score = 0, hits = 0, attempts = 0, combo = 0, maxCombo = 0;
+let currentEntryId = null; // 방금 저장한 리더보드 기록 id
 let timeLeft = GAME_TIME;
 let timerId = null;
 let rafId = null;
@@ -121,8 +129,11 @@ const el = {
   shuffleBanner: $("#shuffle-banner"),
   shuffleIntro: $("#shuffle-intro"),
   finalScore: $("#final-score"),
-  finalHits: $("#final-hits"),
+  finalCombo: $("#final-combo"),
   finalAcc: $("#final-acc"),
+  newHigh: $("#new-high"),
+  nickname: $("#nickname"),
+  lbBody: $("#lb-body"),
 };
 
 function show(name) {
@@ -143,6 +154,14 @@ $("#btn-replay").addEventListener("click", startGame);
 $("#btn-home").addEventListener("click", () => show("start"));
 $("#btn-replay2").addEventListener("click", battleStart);
 $("#btn-home2").addEventListener("click", () => show("start"));
+
+// 닉네임 입력 → 방금 저장한 기록 이름 실시간 갱신(빈 값이면 Player)
+el.nickname.addEventListener("input", () => {
+  if (!currentEntryId) return;
+  setLastName(el.nickname.value.trim());
+  const list = renameEntry(currentEntryId, el.nickname.value);
+  renderLeaderboard(list, currentEntryId);
+});
 
 // ---- 카메라 권한 요청 + 모델 로드 ----
 async function requestCamera() {
@@ -178,7 +197,7 @@ function startGame() {
   resumeAudio(); // 사용자 클릭 시점에 오디오 활성화
 
   el.playVideo.srcObject = stream;
-  score = 0; hits = 0; attempts = 0; combo = 0; timeLeft = GAME_TIME;
+  score = 0; hits = 0; attempts = 0; combo = 0; maxCombo = 0; timeLeft = GAME_TIME;
   el.score.textContent = "0";
   el.hits.textContent = "0";
   el.combo.textContent = "0";
@@ -406,6 +425,7 @@ function confirmSelection(dir) {
   if (correct) {
     hits++;
     combo++;                          // 콤보 +1
+    if (combo > maxCombo) maxCombo = combo;
     const gained = comboPoints(combo);
     score += gained;                  // 콤보에 따른 점수 합산
     node.classList.add("correct");
@@ -478,11 +498,58 @@ function endGame() {
   stopBGM();   // BGM 자연스럽게 Fade Out
   playEnd();   // Finish 효과음
 
-  el.finalScore.textContent = String(score);
-  el.finalHits.textContent = String(hits);
   const acc = attempts ? Math.round((hits / attempts) * 100) : 0;
+  el.finalScore.textContent = String(score);
+  el.finalCombo.textContent = String(maxCombo);
   el.finalAcc.textContent = acc + "%";
+
+  // 리더보드 저장(LocalStorage) — 새 기록 여부는 저장 전 최고점과 비교
+  const prevBest = bestScore();
+  const defaultName = getLastName() || "Player";
+  const { entry, list } = addScore({ name: defaultName, score, combo: maxCombo, acc });
+  currentEntryId = entry.id;
+  renderLeaderboard(list, currentEntryId);
+
+  // 닉네임 입력칸: 마지막 이름 채우기(없으면 비움 → placeholder "Player")
+  el.nickname.value = getLastName();
+
+  // NEW HIGH SCORE 연출
+  el.newHigh.classList.remove("show");
+  if (score > prevBest) {
+    void el.newHigh.offsetWidth;
+    el.newHigh.classList.add("show");
+  }
+
   show("result");
+}
+
+// 리더보드 Top 10 렌더 (currentId = 이번 판 기록 강조)
+function renderLeaderboard(list, currentId) {
+  const top = list.slice(0, 10);
+  if (!top.length) {
+    el.lbBody.innerHTML = '<div class="lb-empty">아직 기록이 없어요</div>';
+    return;
+  }
+  const medals = ["🥇", "🥈", "🥉"];
+  el.lbBody.innerHTML = top.map((e, i) => {
+    const rankCls = i < 3 ? `rank-${i + 1}` : "";
+    const me = e.id === currentId ? "me" : "";
+    const rank = i < 3 ? medals[i] : String(i + 1);
+    const d = new Date(e.ts);
+    const date = `${d.getMonth() + 1}/${d.getDate()}`;
+    return `<div class="lb-row ${rankCls} ${me}">` +
+      `<span class="lb-rank">${rank}</span>` +
+      `<span class="lb-name">${escapeHtml(e.name)}</span>` +
+      `<span class="lb-score">${e.score}</span>` +
+      `<span class="lb-combo">${e.combo}</span>` +
+      `<span class="lb-date">${date}</span>` +
+    `</div>`;
+  }).join("");
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 /* ============================================================
@@ -586,6 +653,7 @@ function confirmShuffle(dir) {
   if (correct) {
     hits++;
     combo++;
+    if (combo > maxCombo) maxCombo = combo;
     const gained = comboPoints(combo);
     score += gained;
     selNode.classList.add("correct");
