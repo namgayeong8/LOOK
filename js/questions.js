@@ -52,12 +52,31 @@ export function pickTargetShape() {
   return rand(SHAPE_KEYS);
 }
 
+// 정답 위치(방향) 선택: 같은 방향이 최대 2번까지만 연속 가능(3연속 방지).
+// 2번 연속이면 다음엔 반드시 다른 방향에서 균등 랜덤으로 뽑아 자연스러운 랜덤성 유지.
+let lastDir = null;   // 직전 정답 방향
+let sameCount = 0;    // 현재 방향의 연속 횟수
+function pickCorrectDir() {
+  let candidates = DIRECTIONS;
+  if (sameCount >= 2 && lastDir) {
+    candidates = DIRECTIONS.filter((d) => d !== lastDir); // 2연속 → 강제로 다른 방향
+  }
+  const dir = candidates[Math.floor(Math.random() * candidates.length)];
+  if (dir === lastDir) {
+    sameCount++;
+  } else {
+    lastDir = dir;
+    sameCount = 1;
+  }
+  return dir;
+}
+
 // 고정된 목표 도형(targetShape)에 맞춘 한 라운드 생성
 // - 정답: 목표와 '도형'이 같은 보기 (색은 랜덤, 무관)
 // - 오답: 목표와 '도형'이 다른 보기 (색 랜덤)
-// - 매 라운드 보기의 위치·색은 랜덤으로 바뀜
+// - 매 라운드 보기의 위치·색은 랜덤으로 바뀜 (정답 위치는 3연속 방지)
 export function generateRound(targetShape) {
-  const correctDir = rand(DIRECTIONS);
+  const correctDir = pickCorrectDir();
   const used = new Set(); // 중복 조합 방지(시각적 다양성)
 
   const options = {};

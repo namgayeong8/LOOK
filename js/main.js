@@ -197,6 +197,9 @@ function startGame() {
   resumeAudio(); // 사용자 클릭 시점에 오디오 활성화
 
   el.playVideo.srcObject = stream;
+  // 검출은 '보이는' 플레이 비디오로 (숨겨진 카메라 화면 비디오는 Chrome에서 프레임 정지 가능)
+  face.setVideo(el.playVideo);
+  el.playVideo.play().catch(() => {});
   score = 0; hits = 0; attempts = 0; combo = 0; maxCombo = 0; timeLeft = GAME_TIME;
   el.score.textContent = "0";
   el.hits.textContent = "0";
@@ -793,6 +796,8 @@ function battleStart() {
   resumeAudio();
 
   p2dom.video.srcObject = stream;
+  face.setVideo(p2dom.video); // 검출을 보이는 2인 화면 비디오로
+  p2dom.video.play().catch(() => {});
   battle.targetShape = pickTargetShape();
   renderTarget2();
   battle.players = [newPlayer(), newPlayer()];

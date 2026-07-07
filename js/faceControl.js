@@ -50,15 +50,28 @@ export class FaceController {
     const resolver = await FilesetResolver.forVisionTasks(
       "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
     );
-    this.landmarker = await FaceLandmarker.createFromOptions(resolver, {
-      baseOptions: {
-        modelAssetPath:
-          "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-        delegate: "GPU",
-      },
-      runningMode: "VIDEO",
-      numFaces: MAX_FACES, // 2인 동시 추적(1인 모드는 왼쪽 얼굴만 사용)
-    });
+    const make = (delegate) =>
+      FaceLandmarker.createFromOptions(resolver, {
+        baseOptions: {
+          modelAssetPath:
+            "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+          delegate,
+        },
+        runningMode: "VIDEO",
+        numFaces: MAX_FACES, // 2인 동시 추적(1인 모드는 왼쪽 얼굴만 사용)
+      });
+    // 일부 브라우저/GPU에서 GPU 델리게이트가 결과를 못 내는 경우 CPU로 대체
+    try {
+      this.landmarker = await make("GPU");
+    } catch (e) {
+      console.warn("[FaceController] GPU delegate 실패 → CPU 대체", e);
+      this.landmarker = await make("CPU");
+    }
+  }
+
+  // 검출에 사용할 비디오 교체(플레이 화면의 '보이는' 비디오로 전환)
+  setVideo(video) {
+    if (video) this.video = video;
   }
 
   start() {
