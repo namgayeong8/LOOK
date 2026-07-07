@@ -67,7 +67,7 @@ const SHUFFLE_MIN_GAP = 4;    // 최소 문제 간격(연속/근접 방지)
 const SHUFFLE_INTRO_MS = 2500; // 시작 안내 오버레이 표시 시간
 const SHUFFLE_SHOW_MS = 800;  // 도형 노출(기억) 시간
 const SHUFFLE_SWAP_MS = 2000; // 셔플(교환) 총 시간
-const SHUFFLE_SWAPS = 8;      // 교환 횟수
+const SHUFFLE_SWAPS = 10;     // 교환 횟수(↑) → 간격 200ms(약 20% 빠름)·난이도 소폭 상승
 
 // 게임 상태(State): waiting → (spawn) → playing → result → waiting …
 const STATE = { WAITING: "waiting", PLAYING: "playing", RESULT: "result" };
