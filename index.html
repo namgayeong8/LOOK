@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LOOK! — 고개로 하트를 찾아라</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- 1) 시작 화면 -->
+    <section id="screen-start" class="screen active">
+      <div class="panel">
+        <h1 class="logo">LOOK<span>!</span></h1>
+        <p class="tagline">고개를 움직여 <b>하트</b>를 찾아라</p>
+        <div class="menu">
+          <button id="btn-1p" class="btn btn-primary">1 Player</button>
+          <button id="btn-2p" class="btn btn-primary">2 Players</button>
+        </div>
+        <p class="hint">웹캠이 필요합니다 🎥 · 2인은 두 얼굴이 화면에 보이게</p>
+      </div>
+    </section>
+
+    <!-- 2) 카메라 권한 화면 -->
+    <section id="screen-camera" class="screen">
+      <div class="panel">
+        <h2>카메라 권한</h2>
+        <p class="desc">얼굴 방향을 인식하기 위해 카메라 권한이 필요합니다.</p>
+
+        <div class="cam-preview">
+          <video id="cam-video" autoplay playsinline muted></video>
+          <div id="cam-status" class="cam-status">권한을 요청하는 중…</div>
+        </div>
+
+        <button id="btn-grant" class="btn btn-primary">카메라 켜기</button>
+        <button id="btn-to-howto" class="btn btn-primary" hidden>다음</button>
+        <p id="cam-error" class="error" hidden></p>
+      </div>
+    </section>
+
+    <!-- 3) 게임 설명 화면 -->
+    <section id="screen-howto" class="screen">
+      <div class="panel">
+        <h2>게임 방법</h2>
+        <ul class="rules">
+          <li>화면 위쪽에 나타나는 <b>목표(색깔 있는 하트 등)</b>를 확인하세요.</li>
+          <li>상 · 하 · 좌 · 우 네 곳에 보기가 나타납니다.</li>
+          <li>목표와 <b>같은 도형·색</b>이 있는 방향으로 <b>고개를 돌리거나 끄덕</b>이세요.</li>
+          <li>잠깐 유지하면 선택됩니다. 정답이면 <b>+100점!</b></li>
+          <li>제한 시간은 <b>40초</b>. 최대한 많이 맞히세요.</li>
+        </ul>
+        <div class="gesture-guide">
+          <span>⬆️ 위</span><span>⬇️ 아래</span><span>⬅️ 왼쪽</span><span>➡️ 오른쪽</span>
+        </div>
+        <button id="btn-start-game" class="btn btn-primary">시작하기</button>
+      </div>
+    </section>
+
+    <!-- 4) 플레이 화면 -->
+    <section id="screen-play" class="screen">
+      <header class="hud">
+        <div class="hud-item">시간 <b id="timer">40</b>s</div>
+        <div class="hud-item">점수 <b id="score">0</b></div>
+        <div class="hud-item">콤보 <b id="combo">0</b></div>
+        <div class="hud-item">맞힘 <b id="hits">0</b></div>
+      </header>
+
+      <div id="combo-popup" class="combo-popup"></div>
+
+      <div class="target-bar">
+        <span>목표</span>
+        <div id="target-shape" class="target-shape"></div>
+        <span id="target-label" class="target-label"></span>
+      </div>
+
+      <div class="board">
+        <div class="option option-up"    data-dir="up"></div>
+        <div class="option option-left"  data-dir="left"></div>
+
+        <div class="center">
+          <video id="play-video" autoplay playsinline muted></video>
+          <div id="dir-indicator" class="dir-indicator" data-dir="center"></div>
+        </div>
+
+        <div class="option option-right" data-dir="right"></div>
+        <div class="option option-down"  data-dir="down"></div>
+      </div>
+
+      <div id="feedback" class="feedback"></div>
+      <div id="shuffle-banner" class="shuffle-banner">🌀 SHUFFLE ROUND 🌀</div>
+    </section>
+
+    <!-- 5) 결과 화면 -->
+    <section id="screen-result" class="screen">
+      <div class="panel">
+        <h2>결과</h2>
+        <div class="final-score">
+          <div class="fs-num" id="final-score">0</div>
+          <div class="fs-label">점</div>
+        </div>
+        <p class="result-detail">
+          맞힌 개수 <b id="final-hits">0</b> · 정확도 <b id="final-acc">0%</b>
+        </p>
+        <button id="btn-replay" class="btn btn-primary">다시 하기</button>
+        <button id="btn-home" class="btn">처음으로</button>
+      </div>
+    </section>
+
+    <!-- 6) 2인 대전 플레이 화면 -->
+    <section id="screen-play2" class="screen">
+      <header class="hud2">
+        <div class="pstats p1">
+          <span class="ptag">Player 1</span>
+          <span>점수 <b id="p1-score">0</b></span>
+          <span>콤보 <b id="p1-combo">0</b></span>
+        </div>
+        <div class="hud-center">
+          <div class="hud-item">시간 <b id="timer2">40</b>s</div>
+          <div class="target-bar">
+            <span>목표</span>
+            <div id="target-shape2" class="target-shape"></div>
+            <span id="target-label2" class="target-label"></span>
+          </div>
+        </div>
+        <div class="pstats p2">
+          <span class="ptag">Player 2</span>
+          <span>점수 <b id="p2-score">0</b></span>
+          <span>콤보 <b id="p2-combo">0</b></span>
+        </div>
+      </header>
+
+      <div class="shared-cam">
+        <video id="play-video2" autoplay playsinline muted></video>
+      </div>
+
+      <div class="boards2">
+        <div class="player-col">
+          <div class="board board-sm" id="board-p1">
+            <div class="option option-up"    data-dir="up"></div>
+            <div class="option option-left"  data-dir="left"></div>
+            <div class="center"><div class="dir-indicator" data-dir="center"></div></div>
+            <div class="option option-right" data-dir="right"></div>
+            <div class="option option-down"  data-dir="down"></div>
+          </div>
+          <div class="feedback" id="feedback-p1"></div>
+        </div>
+        <div class="player-col">
+          <div class="board board-sm" id="board-p2">
+            <div class="option option-up"    data-dir="up"></div>
+            <div class="option option-left"  data-dir="left"></div>
+            <div class="center"><div class="dir-indicator" data-dir="center"></div></div>
+            <div class="option option-right" data-dir="right"></div>
+            <div class="option option-down"  data-dir="down"></div>
+          </div>
+          <div class="feedback" id="feedback-p2"></div>
+        </div>
+      </div>
+
+      <div id="combo-popup-p1" class="combo-popup p1"></div>
+      <div id="combo-popup-p2" class="combo-popup p2"></div>
+      <div id="shuffle-banner2" class="shuffle-banner">🌀 SHUFFLE ROUND 🌀</div>
+    </section>
+
+    <!-- 7) 2인 대전 결과 화면 -->
+    <section id="screen-result2" class="screen">
+      <div class="panel">
+        <h2>대전 결과</h2>
+        <div class="battle-result">
+          <div class="pr p1"><span class="ptag">Player 1</span><div class="fs-num" id="r-p1-score">0</div></div>
+          <div class="vs">VS</div>
+          <div class="pr p2"><span class="ptag">Player 2</span><div class="fs-num" id="r-p2-score">0</div></div>
+        </div>
+        <div class="winner" id="winner-text"></div>
+        <button id="btn-replay2" class="btn btn-primary">다시 하기</button>
+        <button id="btn-home2" class="btn">처음으로</button>
+      </div>
+    </section>
+
+    <!-- Shuffle Round 시작 안내 오버레이 (1인·2인 공용) -->
+    <div id="shuffle-intro" class="shuffle-intro">
+      <div class="si-content">
+        <div class="si-title">🌀 SHUFFLE ROUND 🌀</div>
+        <div class="si-sub">자리를 기억하세요!<br>잠시 후 위치가 바뀝니다.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
