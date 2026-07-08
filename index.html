@@ -56,6 +56,30 @@
       </div>
     </section>
 
+    <!-- 3.5) 고개 테스트 화면 (게임 시작 전 1회) -->
+    <section id="screen-headtest" class="screen">
+      <div class="panel">
+        <h2>고개 테스트</h2>
+        <p class="desc ht-desc">
+          아래 안내에 따라 고개를 움직여 주세요.<br>
+          얼굴이 화면 안에 보이는 상태를 유지해주세요.<br>
+          너무 많이 돌리지 않아도 인식됩니다.
+        </p>
+
+        <div class="ht-progress" id="ht-progress"></div>
+
+        <div class="ht-stage" id="ht-stage">
+          <video id="ht-video" autoplay playsinline muted></video>
+          <div class="ht-ring" id="ht-ring"></div>
+          <div class="ht-arrow" id="ht-arrow" data-dir="up">▲</div>
+          <div class="ht-check" id="ht-check">✅</div>
+        </div>
+
+        <p class="ht-guide" id="ht-guide">위를 바라보세요.</p>
+        <p class="ht-hint" id="ht-hint" hidden>🙈 얼굴을 화면 안에 맞춰주세요</p>
+      </div>
+    </section>
+
     <!-- 4) 플레이 화면 -->
     <section id="screen-play" class="screen">
       <header class="hud">
@@ -192,6 +216,11 @@
         <button id="btn-home2" class="btn">처음으로</button>
       </div>
     </section>
+
+    <!-- 게임 시작 카운트다운 오버레이 (3 → 2 → 1 → GO!) -->
+    <div id="countdown" class="countdown" hidden>
+      <div id="countdown-num" class="countdown-num"></div>
+    </div>
 
     <!-- Shuffle Round 시작 안내 오버레이 (1인·2인 공용) -->
     <div id="shuffle-intro" class="shuffle-intro">

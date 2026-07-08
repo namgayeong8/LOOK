@@ -13,22 +13,37 @@
 let ctx = null;
 let seGain = null;   // 효과음 전용 볼륨
 let bgmGain = null;  // 배경음악 전용 볼륨(마스터)
+let limiter = null;  // 마스터 리미터(피크가 튀어도 Clipping/왜곡 방지)
 const layer = {};    // core/bass/drum/perc/climax 레이어별 GainNode
 
-const SE_VOLUME = 0.9;
-const BGM_VOLUME = 0.12;
+const SE_VOLUME = 2.16;   // 효과음 볼륨(기존 1.08의 2배 — 체감 2배)
+const BGM_VOLUME = 0.336; // 배경음악 볼륨(기존 0.168의 2배 — 체감 2배)
 const LAYER_KEYS = ["core", "bass", "drum", "perc", "climax"];
+
+// Ducking: 효과음이 재생되는 동안 BGM을 살짝 눌러(줄여) 효과음이 묻히지 않게 한다.
+const DUCK_LEVEL = BGM_VOLUME * 0.55; // 효과음 재생 순간의 BGM 목표 볼륨
+const DUCK_DOWN = 0.04;   // 눌리는 시간(빠르게)
+const DUCK_UP = 0.34;     // 원래대로 복귀하는 시간(부드럽게 Fade)
+let bgmFadingOut = false; // 종료 Fade Out 중에는 Ducking 복귀가 페이드를 방해하지 않도록
 
 function ac() {
   if (!ctx) {
     const AC = window.AudioContext || window.webkitAudioContext;
     ctx = new AC();
+    // 마스터 리미터: 볼륨을 키운 뒤에도 피크가 0dBFS를 넘겨 찢어지지 않게 눌러준다.
+    limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -1.5; // -1.5dBFS 부근에서 리미팅 시작
+    limiter.knee.value = 0;         // 하드 니(리미터처럼 동작)
+    limiter.ratio.value = 20;       // 강한 압축비
+    limiter.attack.value = 0.003;   // 빠른 어택으로 순간 피크 포착
+    limiter.release.value = 0.25;
+    limiter.connect(ctx.destination);
     seGain = ctx.createGain();
     seGain.gain.value = SE_VOLUME;
-    seGain.connect(ctx.destination);
+    seGain.connect(limiter);
     bgmGain = ctx.createGain();
     bgmGain.gain.value = BGM_VOLUME;
-    bgmGain.connect(ctx.destination);
+    bgmGain.connect(limiter);
     for (const k of LAYER_KEYS) {
       const g = ctx.createGain();
       g.gain.value = k === "core" ? 1 : 0; // core만 처음부터 on
@@ -45,9 +60,21 @@ export function resumeAudio() {
   if (c.state === "suspended") c.resume();
 }
 
+// 효과음이 seGain으로 나갈 때 BGM을 잠깐 눌렀다가 부드럽게 되돌린다(Ducking).
+function duckBgm() {
+  if (!bgmPlaying || bgmFadingOut) return;
+  const c = ac();
+  const now = c.currentTime;
+  bgmGain.gain.cancelScheduledValues(now);
+  bgmGain.gain.setValueAtTime(bgmGain.gain.value, now);            // 현재값에서 시작(급변 방지)
+  bgmGain.gain.linearRampToValueAtTime(DUCK_LEVEL, now + DUCK_DOWN); // 살짝 줄이고
+  bgmGain.gain.linearRampToValueAtTime(BGM_VOLUME, now + DUCK_UP);   // 원래대로 Fade
+}
+
 // 톤 재생 헬퍼(대상 gain 노드로 라우팅)
 function tone(dest, freq, when, dur, type = "sine", peak = 0.2) {
   const c = ac();
+  if (dest === seGain) duckBgm();
   const t0 = c.currentTime + when;
   const osc = c.createOscillator();
   const g = c.createGain();
@@ -78,11 +105,20 @@ export function playEnd() {              // 게임 종료: Finish
   const notes = [523.25, 659.25, 783.99, 1046.5]; // C5 E5 G5 C6
   notes.forEach((f, i) => tone(seGain, f, i * 0.11, 0.22, "triangle", 0.2));
 }
+export function playCountBeep() {        // 카운트다운 3·2·1: 짧고 단단한 비프
+  tone(seGain, 680, 0, 0.13, "square", 0.16);
+  tone(seGain, 900, 0, 0.09, "sine", 0.1);
+}
+export function playCountGo() {          // GO!: 상승하는 시작 팡파르
+  [523.25, 783.99, 1046.5].forEach((f, i) => tone(seGain, f, i * 0.06, 0.22, "triangle", 0.24));
+  tone(seGain, 1318.51, 0.18, 0.28, "sine", 0.18);
+}
 
 // ---- Shuffle Round 전용 효과음 ----
 // 노이즈를 밴드패스 필터로 쓸어내려 '스와이프' 사운드를 만든다.
 function sweep(when, dur, fromF, toF, peak) {
   const c = ac();
+  duckBgm(); // sweep은 항상 효과음(seGain)이므로 Ducking
   const t0 = c.currentTime + when;
   const s = c.createBufferSource();
   s.buffer = noise();
@@ -127,6 +163,7 @@ function noise() {
 }
 function perc(dest, when, dur, ftype, freq, peak) {
   const c = ac();
+  if (dest === seGain) duckBgm(); // 효과음으로 쓰일 때만 Ducking(BGM 드럼은 제외)
   const t0 = c.currentTime + when;
   const s = c.createBufferSource();
   s.buffer = noise();
@@ -263,6 +300,7 @@ export function startBGM() {
   const c = ac();
   if (bgmPlaying) stopBGMImmediate();
   bgmPlaying = true;
+  bgmFadingOut = false;
   bgmStep = 0;
   bgmRate = 1.0;
   bassOn = drumOn = percOn = climaxOn = false;
@@ -280,6 +318,7 @@ export function startBGM() {
 
 function stopBGMImmediate() {
   bgmPlaying = false;
+  bgmFadingOut = false;
   clearTimeout(bgmTimer);
   bgmTimer = null;
 }
@@ -287,6 +326,7 @@ function stopBGMImmediate() {
 // 자연스러운 Fade Out 후 정지(종료 효과음과 매끄럽게 연결).
 export function stopBGM(fadeMs = 900) {
   if (!bgmPlaying) return;
+  bgmFadingOut = true; // Fade Out 중에는 효과음 Ducking이 볼륨을 되살리지 않도록
   const c = ac();
   const now = c.currentTime;
   bgmGain.gain.cancelScheduledValues(now);

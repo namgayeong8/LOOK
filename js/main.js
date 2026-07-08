@@ -22,6 +22,8 @@ import {
   playCurtainOpen,
   playSwapTick,
   playShutter,
+  playCountBeep,
+  playCountGo,
 } from "./sound.js";
 import {
   addScore,
@@ -33,7 +35,16 @@ import {
 
 // ---- 설정 ----
 const GAME_TIME = 40;      // 제한 시간(초)
-const DWELL_MS = 300;      // 한 방향 0.3초 유지 시 선택 확정(리듬감 있게 빠른 반응)
+// 응시(dwell) 유지 시간: 게임 후반으로 갈수록 짧아져 더 빠른 반응을 요구한다.
+// 경과 시간(초) 구간별로 필요한 유지 시간(ms)을 반환한다.
+//   0~20초 : 0.35초 / 20~30초 : 0.27초 / 30~40초 : 0.20초
+// 얼굴 인식·방향 판정·노이즈 필터링(faceControl.js의 SMOOTH)은 그대로 두고,
+// 오직 '확정에 필요한 유지 시간'만 조절한다.
+function dwellMs(elapsed) {
+  if (elapsed < 20) return 350;
+  if (elapsed < 30) return 270;
+  return 200;
+}
 
 // 콤보 점수표: 정답 시 '증가 후 콤보 수'에 따라 획득 점수 결정
 function comboPoints(c) {
@@ -121,6 +132,7 @@ const screens = {
   start:  $("#screen-start"),
   camera: $("#screen-camera"),
   howto:  $("#screen-howto"),
+  headtest: $("#screen-headtest"),
   play:   $("#screen-play"),
   result: $("#screen-result"),
   play2:  $("#screen-play2"),
@@ -144,6 +156,8 @@ const el = {
   feedback: $("#feedback"),
   shuffleBanner: $("#shuffle-banner"),
   shuffleIntro: $("#shuffle-intro"),
+  countdown: $("#countdown"),
+  countdownNum: $("#countdown-num"),
   finalScore: $("#final-score"),
   finalCombo: $("#final-combo"),
   finalAcc: $("#final-acc"),
@@ -163,9 +177,7 @@ $("#btn-1p").addEventListener("click", () => { selectedMode = 1; show("camera");
 $("#btn-2p").addEventListener("click", () => { selectedMode = 2; show("camera"); });
 el.btnGrant.addEventListener("click", requestCamera);
 el.btnToHowto.addEventListener("click", () => show("howto"));
-$("#btn-start-game").addEventListener("click", () => {
-  if (selectedMode === 2) battleStart(); else startGame();
-});
+$("#btn-start-game").addEventListener("click", startHeadTest);
 $("#btn-replay").addEventListener("click", startGame);
 $("#btn-home").addEventListener("click", () => show("start"));
 $("#btn-replay2").addEventListener("click", battleStart);
@@ -204,6 +216,189 @@ async function requestCamera() {
       (err && err.name ? err.name : "오류") + ")";
     el.camStatus.textContent = "권한이 필요합니다.";
   }
+}
+
+/* ============================================================
+   고개 테스트 (게임 시작 전 1회) — 위→오른쪽→아래→왼쪽 순서로
+   각 방향을 약 0.4초 유지하면 인식 완료 → 자동 진행 → 게임 시작.
+   게임과 동일한 얼굴 인식 기준(FaceController)을 사용한다.
+   ============================================================ */
+const HT_STEPS = ["up", "right", "down", "left"];
+const HT_HOLD_MS = 400;   // 해당 방향 유지 인정 시간
+const HT_LABELS = {
+  up: "위를 바라보세요.",
+  right: "오른쪽을 바라보세요.",
+  down: "아래를 바라보세요.",
+  left: "왼쪽을 바라보세요.",
+};
+const HT_ARROWS = { up: "▲", right: "▶", down: "▼", left: "◀" };
+
+const ht = {
+  video: $("#ht-video"),
+  arrow: $("#ht-arrow"),
+  guide: $("#ht-guide"),
+  check: $("#ht-check"),
+  ring: $("#ht-ring"),
+  stage: $("#ht-stage"),
+  progress: $("#ht-progress"),
+  hint: $("#ht-hint"),
+};
+
+let htStep = 0;
+let htHoldStart = 0;
+let htRaf = null;
+let htDone = false;   // 완료(전 단계 끝)됨
+let htReady = false;  // 보정 완료 후 입력 허용
+
+function startHeadTest() {
+  if (!stream) { show("camera"); return; }
+  resumeAudio(); // 사용자 클릭 시점에 오디오 활성화
+
+  ht.video.srcObject = stream;
+  // 검출은 '보이는' 비디오로 (숨겨진 비디오는 Chrome에서 프레임 정지 가능)
+  face.setVideo(ht.video);
+  ht.video.play().catch(() => {});
+
+  htStep = 0;
+  htHoldStart = 0;
+  htDone = false;
+  htReady = false;
+  renderHeadTestStep();
+
+  show("headtest");
+  face.start();
+  // 정면을 볼 시간을 준 뒤 보정 → 이후부터 방향 인식 시작
+  setTimeout(() => { face.calibrate(); htReady = true; }, 800);
+
+  cancelAnimationFrame(htRaf);
+  htLoop();
+}
+
+// 현재 단계의 화살표/문구/진행 표시 갱신
+function renderHeadTestStep() {
+  const dir = HT_STEPS[htStep];
+  ht.stage.classList.remove("done", "finished");
+  ht.check.classList.remove("show");
+  ht.arrow.textContent = HT_ARROWS[dir];
+  ht.arrow.dataset.dir = dir;
+  ht.guide.textContent = HT_LABELS[dir];
+  ht.ring.style.background = "transparent";
+  renderHeadTestProgress();
+}
+
+// 진행 표시: ● 완료/현재/대기 점 + "n / 4"
+function renderHeadTestProgress() {
+  const dots = HT_STEPS.map((_, i) => {
+    const cls = i < htStep ? "done" : i === htStep ? "active" : "";
+    return `<span class="ht-dot ${cls}"></span>`;
+  }).join("");
+  ht.progress.innerHTML = dots +
+    `<span class="ht-count">${Math.min(htStep + 1, HT_STEPS.length)} / ${HT_STEPS.length}</span>`;
+}
+
+function htLoop() {
+  if (htDone) return;
+
+  const found = face.faceFound;
+  const dir = found ? face.direction : "center";
+  const target = HT_STEPS[htStep];
+
+  // 얼굴이 화면 밖으로 나가면 진행되지 않음(안내 표시)
+  ht.hint.hidden = found;
+
+  if (htReady && found && dir === target) {
+    if (!htHoldStart) htHoldStart = performance.now();
+    const held = performance.now() - htHoldStart;
+    const ratio = Math.min(1, held / HT_HOLD_MS);
+    ht.ring.style.background =
+      `conic-gradient(var(--lime) ${ratio * 360}deg, rgba(255,255,255,0.14) 0)`;
+    if (held >= HT_HOLD_MS) { headTestStepDone(); return; }
+  } else {
+    htHoldStart = 0;
+    ht.ring.style.background = "transparent";
+  }
+
+  htRaf = requestAnimationFrame(htLoop);
+}
+
+// 한 방향 인식 완료 → 체크 표시 후 다음 단계(또는 완료)로 자동 진행
+function headTestStepDone() {
+  cancelAnimationFrame(htRaf);
+  htHoldStart = 0;
+  ht.hint.hidden = true;
+  ht.stage.classList.add("done");
+  ht.check.classList.add("show");
+  ht.guide.textContent = "✅ 인식 완료";
+  ht.ring.style.background = "transparent";
+  playCorrect();
+
+  setTimeout(() => {
+    htStep++;
+    if (htStep >= HT_STEPS.length) {
+      finishHeadTest();
+    } else {
+      renderHeadTestStep();
+      htLoop();
+    }
+  }, 650);
+}
+
+// 모든 방향 완료 → 축하 표시 후 약 1초 뒤 게임 시작
+function finishHeadTest() {
+  htDone = true;
+  cancelAnimationFrame(htRaf);
+  ht.hint.hidden = true;
+  ht.check.classList.remove("show");
+  ht.progress.innerHTML = HT_STEPS.map(() => `<span class="ht-dot done"></span>`).join("") +
+    `<span class="ht-count">${HT_STEPS.length} / ${HT_STEPS.length}</span>`;
+  ht.stage.classList.remove("done");
+  ht.stage.classList.add("finished");
+  ht.arrow.dataset.dir = "done";
+  ht.arrow.textContent = "🎉";
+  ht.guide.innerHTML = "고개 테스트 완료!<br>잠시 후 게임을 시작합니다.";
+  playCorrect();
+
+  // 🎉 완료 메시지를 약 1초 보여준 뒤 → 3·2·1·GO! 카운트다운 → 게임 시작
+  setTimeout(() => {
+    startCountdown(() => {
+      if (selectedMode === 2) battleStart(); else startGame();
+    });
+  }, 1000);
+}
+
+/* ============================================================
+   게임 시작 카운트다운 (3 → 2 → 1 → GO!)
+   숫자는 각 1초, GO!는 0.8초 표시. Pop + Fade In/Out 애니메이션.
+   카운트다운 중에는 얼굴 입력을 받지 않으며(게임 미시작),
+   GO!가 사라지는 순간 onDone()이 호출되어 첫 문제 생성 + 40초 타이머가 시작된다.
+   ============================================================ */
+const COUNTDOWN_SEQ = [
+  { text: "3",   cls: "count", ms: 1000, sound: playCountBeep },
+  { text: "2",   cls: "count", ms: 1000, sound: playCountBeep },
+  { text: "1",   cls: "count", ms: 1000, sound: playCountBeep },
+  { text: "GO!", cls: "go",    ms: 800,  sound: playCountGo },
+];
+
+function startCountdown(onDone) {
+  el.countdown.hidden = false;
+  let i = 0;
+  const step = () => {
+    if (i >= COUNTDOWN_SEQ.length) {
+      el.countdown.hidden = true;
+      el.countdownNum.className = "countdown-num";
+      onDone();
+      return;
+    }
+    const s = COUNTDOWN_SEQ[i];
+    el.countdownNum.textContent = s.text;
+    el.countdownNum.className = "countdown-num " + s.cls;
+    void el.countdownNum.offsetWidth;         // 리플로우로 애니메이션 재시작
+    el.countdownNum.classList.add("play");
+    s.sound();
+    i++;
+    setTimeout(step, s.ms);
+  };
+  step();
 }
 
 // ---- 게임 시작 ----
@@ -432,12 +627,13 @@ function gameLoop() {
   } else if (!locked && DIRECTIONS.includes(dir)) {
     const node = document.querySelector(`.option[data-dir="${dir}"]`);
     node.classList.add("hover");
+    const need = dwellMs(GAME_TIME - timeLeft);
     const held = performance.now() - hoverStart;
-    const ratio = Math.min(1, held / DWELL_MS);
+    const ratio = Math.min(1, held / need);
     const ring = node.querySelector(".ring");
     if (ring) ring.style.width = ratio * 60 + "%";
 
-    if (held >= DWELL_MS) {
+    if (held >= need) {
       confirmSelection(dir);
     }
   }
@@ -670,10 +866,11 @@ function handleShuffleInput(dir) {
 
   const node = optionEl(cellBox[dir]); // 현재 그 셀에 있는 박스
   node.classList.add("hover");
+  const need = dwellMs(GAME_TIME - timeLeft);
   const held = performance.now() - hoverStart;
   const ring = node.querySelector(".ring");
-  if (ring) ring.style.width = Math.min(1, held / DWELL_MS) * 60 + "%";
-  if (held >= DWELL_MS) confirmShuffle(dir);
+  if (ring) ring.style.width = Math.min(1, held / need) * 60 + "%";
+  if (held >= need) confirmShuffle(dir);
 }
 
 // 6) 선택 확정 → 커튼 열림 + 판정(점수/콤보는 일반과 동일)
@@ -1055,10 +1252,11 @@ function battleLoop() {
     } else if (!p.locked && DIRECTIONS.includes(dir)) {
       const node = b.options[dir];
       node.classList.add("hover");
+      const need = dwellMs(GAME_TIME - battle.timeLeft);
       const held = performance.now() - p.hoverStart;
       const ring = node.querySelector(".ring");
-      if (ring) ring.style.width = Math.min(1, held / DWELL_MS) * 60 + "%";
-      if (held >= DWELL_MS) battleConfirm(i, dir);
+      if (ring) ring.style.width = Math.min(1, held / need) * 60 + "%";
+      if (held >= need) battleConfirm(i, dir);
     }
   }
 
@@ -1276,10 +1474,11 @@ function battleHandleShuffleInput(i, dir) {
 
   const node = b.options[battle.cellBox[dir]]; // 현재 그 셀에 있는 박스
   node.classList.add("hover");
+  const need = dwellMs(GAME_TIME - battle.timeLeft);
   const held = performance.now() - p.hoverStart;
   const ring = node.querySelector(".ring");
-  if (ring) ring.style.width = Math.min(1, held / DWELL_MS) * 60 + "%";
-  if (held >= DWELL_MS) battleConfirm(i, dir);
+  if (ring) ring.style.width = Math.min(1, held / need) * 60 + "%";
+  if (held >= need) battleConfirm(i, dir);
 }
 
 // --- 2인 셔플 헬퍼(두 보드 동일 매핑 적용) ---
