@@ -207,6 +207,15 @@ h2 { font-size: 28px; margin-bottom: 14px; }
 @keyframes curtainDown { from { transform: translateY(-100%); } to { transform: translateY(0); } }
 @keyframes curtainUp   { from { transform: translateY(0); } to { transform: translateY(-100%); } }
 
+/* Curtain Flicker Round: 각 커튼이 서로 독립적으로 매우 빠르게 여닫힘.
+   keyframe 대신 transform 토글(.up)로 제어 → 4개가 각자 랜덤 타이밍으로 움직임 */
+.curtain.flicker {
+  animation: none;
+  transform: translateY(0);            /* 기본: 닫힘(도형을 가림) */
+  transition: transform 0.07s ease;    /* 빠르게 위아래로 슬라이드 */
+}
+.curtain.flicker.up { transform: translateY(-100%); }  /* 열림(도형 노출) */
+
 /* Shuffle Round 배너 */
 .shuffle-banner {
   position: fixed; top: 30%; left: 50%;

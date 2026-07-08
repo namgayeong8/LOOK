@@ -21,6 +21,7 @@ import {
   playCurtainClose,
   playCurtainOpen,
   playSwapTick,
+  playShutter,
 } from "./sound.js";
 import {
   addScore,
@@ -69,6 +70,17 @@ const SHUFFLE_SHOW_MS = 800;  // 도형 노출(기억) 시간
 const SHUFFLE_SWAP_MS = 2000; // 셔플(교환) 총 시간
 const SHUFFLE_SWAPS = 10;     // 교환 횟수(↑) → 간격 200ms(약 20% 빠름)·난이도 소폭 상승
 
+// Curtain Flicker Round(순간 집중력·순발력 특별 이벤트): 40초 동안 약 2회, 비연속, 자연 분산.
+// 문제가 정상 배치된 뒤, 4개의 커튼이 '각각 독립적·랜덤'하게 빠르게 여닫히며
+// 플레이어가 정답을 선택할 때까지 무한 반복된다(선택 순간 멈추고 모두 열림).
+const FLICKER_EVENTS = 2;
+const FLICKER_START = 8;       // 시작 직후 방지
+const FLICKER_END = 34;        // 종료 직전 방지
+const FLICKER_MIN_GAP = 4;     // 최소 문제 간격(연속/근접 방지)
+const FLICKER_DURATION_MS = 1000; // 깜빡임 지속 시간(약 1초)
+const FLICKER_MIN_MS = 150;    // 각 커튼 토글 최소 간격
+const FLICKER_MAX_MS = 250;    // 각 커튼 토글 최대 간격(평균 0.15~0.25초)
+
 // 게임 상태(State): waiting → (spawn) → playing → result → waiting …
 const STATE = { WAITING: "waiting", PLAYING: "playing", RESULT: "result" };
 
@@ -87,6 +99,10 @@ let shuffleTimes = [], shuffleIdx = 0, qSinceLastShuffle = 0;
 let shuffleActive = false;      // 셔플 선택(입력) 단계인지
 let cellBox = {}, boxCell = {}; // 셀↔박스(home 방향) 매핑
 let homeCenter = {};            // 각 셀의 화면 중심 좌표
+// Curtain Flicker Round 상태
+let flickerTimes = [], flickerIdx = 0, qSinceLastFlicker = 0;
+let flickerActive = false;      // 커튼이 깜빡이는 중인지
+let flickerTimers = [];         // 커튼별 토글/종료 타이머 핸들(정리용)
 let score = 0, hits = 0, attempts = 0, combo = 0, maxCombo = 0;
 let currentEntryId = null; // 방금 저장한 리더보드 기록 id
 let timeLeft = GAME_TIME;
@@ -224,6 +240,12 @@ function startGame() {
   shuffleActive = false;
   resetShuffleVisuals();
 
+  // Curtain Flicker Round 시각 계획
+  flickerTimes = planEvents(FLICKER_EVENTS, FLICKER_START, FLICKER_END);
+  flickerIdx = 0;
+  qSinceLastFlicker = FLICKER_MIN_GAP;
+  resetFlickerVisuals();
+
   show("play");
   face.start();
   // 화면 전환 후 잠시 뒤 정면 보정
@@ -259,6 +281,7 @@ function renderTarget() {
 // ---- [Waiting] 4개 칸을 모두 빈 상태로 만들고, 잠시 후 Spawn 예약 ----
 function scheduleSpawn() {
   phase = STATE.WAITING;
+  resetFlickerVisuals(); // 남은 커튼/타이머 정리
   clearBoard();
   clearTimeout(phaseTimer);
   phaseTimer = setTimeout(spawn, spawnDelay(GAME_TIME - timeLeft));
@@ -315,8 +338,18 @@ function spawn() {
 
   question = generateRound(targetShape); // 목표는 고정, 위치·색만 랜덤
 
+  // Curtain Flicker Round 판정(Pop보다 우선, 서로 겹치지 않게)
+  qSinceLastFlicker++;
+  const isFlicker =
+    flickerIdx < flickerTimes.length &&
+    elapsed >= flickerTimes[flickerIdx] &&
+    elapsed <= FLICKER_END &&
+    qSinceLastFlicker >= FLICKER_MIN_GAP;
+  if (isFlicker) { flickerIdx++; qSinceLastFlicker = 0; }
+
   qSinceLastPop++;
   const isPop =
+    !isFlicker &&
     popIdx < popTimes.length &&
     elapsed >= popTimes[popIdx] &&
     elapsed <= POP_END &&
@@ -325,7 +358,10 @@ function spawn() {
 
   renderOptions(question);
 
-  if (isPop) {
+  if (isFlicker) {
+    // 특별 Curtain Flicker 등장: 도형 배치 후 커튼이 빠르게 깜빡임
+    startCurtainFlicker();
+  } else if (isPop) {
     // 특별 Pop 등장: 스케일 애니메이션 + Pop/Tick 효과음
     for (const dir of DIRECTIONS) {
       const node = optionEl(dir);
@@ -421,6 +457,7 @@ function clearHover() {
 function confirmSelection(dir) {
   phase = STATE.RESULT; // 입력 잠금
   locked = true;
+  if (flickerActive) endCurtainFlicker(); // 답하면 커튼을 모두 열어 결과 확인
   attempts++;
   const node = document.querySelector(`.option[data-dir="${dir}"]`);
   const correct = dir === question.correctDir;
@@ -497,6 +534,7 @@ function endGame() {
   phase = STATE.WAITING;
   shuffleActive = false;
   resetShuffleVisuals();
+  resetFlickerVisuals();
   clearBoard();
   stopBGM();   // BGM 자연스럽게 Fade Out
   playEnd();   // Finish 효과음
@@ -735,6 +773,60 @@ function resetShuffleVisuals() {
 }
 
 /* ============================================================
+   Curtain Flicker Round (순간 집중력·순발력 특별 이벤트, 1인 모드)
+   도형이 정상 배치된 뒤, 4개의 커튼이 각각 독립적·랜덤하게 빠르게 여닫힌다.
+   선택 전까지 무한 반복 → 순간순간 보이는 도형으로 정답 판단 → 선택 시 멈추고 모두 열림.
+   ============================================================ */
+function startCurtainFlicker() {
+  resetFlickerVisuals();
+  flickerActive = true;
+  flashBanner(el.shuffleBanner, "👁 순간 집중! 커튼을 노려보세요", 1200);
+
+  for (const dir of DIRECTIONS) {
+    const node = optionEl(dir);
+    const c = document.createElement("div");
+    c.className = "curtain flicker"; // 닫힘(가림) 상태로 시작
+    node.appendChild(c);
+    scheduleCurtainToggle(c); // 각 커튼 독립 시작(랜덤 초기 위상)
+  }
+  playCurtainClose();
+  // 자동 종료 없음 → 플레이어가 정답을 선택할 때까지 무한 반복(endCurtainFlicker는 선택 시 호출)
+}
+
+// 한 커튼을 랜덤 간격(0.15~0.25초)으로 계속 여닫는다(각자 독립).
+// 플레이어가 선택할 때까지(flickerActive) 멈추지 않고 반복한다.
+function scheduleCurtainToggle(curtain) {
+  const tick = () => {
+    if (!flickerActive) return;
+    curtain.classList.toggle("up");
+    if (curtain.classList.contains("up")) playShutter(); // 열리는 순간 셔터음
+    flickerTimers.push(setTimeout(tick, randRange(FLICKER_MIN_MS, FLICKER_MAX_MS)));
+  };
+  // 초기 위상도 랜덤 → 4개가 동시에 움직이지 않도록
+  flickerTimers.push(setTimeout(tick, randRange(0, FLICKER_MAX_MS)));
+}
+
+// 깜빡임 종료: 타이머 정리 + 모든 커튼을 열고(슬라이드 업) 제거 → 일반 플레이로
+function endCurtainFlicker() {
+  if (!flickerActive) return;
+  flickerActive = false;
+  flickerTimers.forEach(clearTimeout);
+  flickerTimers = [];
+  const curtains = document.querySelectorAll("#screen-play .curtain.flicker");
+  curtains.forEach((c) => c.classList.add("up"));
+  playCurtainOpen();
+  setTimeout(() => curtains.forEach((c) => c.remove()), 150);
+}
+
+// 남은 커튼/타이머를 즉시 정리(라운드 전환·종료 시)
+function resetFlickerVisuals() {
+  flickerActive = false;
+  flickerTimers.forEach(clearTimeout);
+  flickerTimers = [];
+  document.querySelectorAll("#screen-play .curtain.flicker").forEach((c) => c.remove());
+}
+
+/* ============================================================
    2인 대전 모드 (Battle Mode)
    - 공통 로직 재사용: comboPoints / spawnDelay / planPopEvents /
      generateRound / shapeSVG / 사운드 / FaceController(2얼굴)
@@ -788,6 +880,8 @@ const battle = {
   // Shuffle Round(공유): 두 보드에 동일 시퀀스 적용, 선택/판정은 각자 독립
   shuffleTimes: [], shuffleIdx: 0, qSinceLastShuffle: 0, shuffleActive: false,
   cellBox: {}, boxCell: {}, homeCenters: [{}, {}],
+  // Curtain Flicker Round(공유): 두 보드 각각 4개 커튼이 독립적으로 깜빡임
+  flickerTimes: [], flickerIdx: 0, qSinceLastFlicker: 0, flickerActive: false, flickerTimers: [],
   players: [newPlayer(), newPlayer()],
 };
 
@@ -812,6 +906,10 @@ function battleStart() {
   battle.qSinceLastShuffle = SHUFFLE_MIN_GAP;
   battle.shuffleActive = false;
   battleResetShuffleVisuals();
+  battle.flickerTimes = planEvents(FLICKER_EVENTS, FLICKER_START, FLICKER_END);
+  battle.flickerIdx = 0;
+  battle.qSinceLastFlicker = FLICKER_MIN_GAP;
+  battleResetFlickerVisuals();
   updateBattleHud(0); updateBattleHud(1);
   p2dom.timer.textContent = String(GAME_TIME);
 
@@ -852,6 +950,7 @@ function updateBattleHud(i) {
 function battleScheduleSpawn() {
   battle.phase = STATE.WAITING;
   battleResetShuffleVisuals();
+  battleResetFlickerVisuals();
   battleClearBoards();
   clearTimeout(battle.phaseTimer);
   battle.phaseTimer = setTimeout(battleSpawn, spawnDelay(GAME_TIME - battle.timeLeft));
@@ -877,8 +976,18 @@ function battleSpawn() {
 
   battle.question = generateRound(battle.targetShape); // 목표 고정, 위치·색만 랜덤
 
+  // Curtain Flicker Round 판정(Pop보다 우선, 서로 겹치지 않게) — 두 보드 공유
+  battle.qSinceLastFlicker++;
+  const isFlicker =
+    battle.flickerIdx < battle.flickerTimes.length &&
+    elapsed >= battle.flickerTimes[battle.flickerIdx] &&
+    elapsed <= FLICKER_END &&
+    battle.qSinceLastFlicker >= FLICKER_MIN_GAP;
+  if (isFlicker) { battle.flickerIdx++; battle.qSinceLastFlicker = 0; }
+
   battle.qSinceLastPop++;
   const isPop =
+    !isFlicker &&
     battle.popIdx < battle.popTimes.length &&
     elapsed >= battle.popTimes[battle.popIdx] &&
     elapsed <= POP_END &&
@@ -906,8 +1015,11 @@ function battleSpawn() {
   // 문제별 플레이어 응답 상태 초기화
   battle.firstCorrectDone = false;
   for (const p of battle.players) { p.answered = false; p.hoverDir = "center"; p.locked = true; }
-  battle.answerDeadline = performance.now() + BATTLE_ANSWER_MS;
+  battle.answerDeadline = performance.now() + BATTLE_ANSWER_MS + (isFlicker ? FLICKER_DURATION_MS : 0);
   battle.phase = STATE.PLAYING;
+
+  // 커튼 깜빡임 시작(도형 배치 후) — 두 보드 각각 4개 커튼이 독립적으로
+  if (isFlicker) battleStartCurtainFlicker();
 }
 
 function battleClearBoards() {
@@ -979,6 +1091,8 @@ function battleConfirm(i, dir) {
   const node = b.options[selectedDir];
   const correct = selectedDir === battle.question.correctDir;
   if (battle.shuffleActive) { battleOpenCurtains(i); playCurtainOpen(); }
+  // 커튼 깜빡임 중 답하면 해당 보드 커튼을 열어 결과 확인(상대 보드는 유지)
+  if (battle.flickerActive) battleRevealBoardFlicker(i);
 
   if (correct) {
     if (!battle.firstCorrectDone) {
@@ -1029,6 +1143,9 @@ function battleEndQuestion() {
     battle.shuffleActive = false;
   }
 
+  // 커튼 깜빡임이 아직 진행 중이면 정리(양쪽 모두 열림)
+  if (battle.flickerActive) battleResetFlickerVisuals();
+
   for (let i = 0; i < 2; i++) {
     const p = battle.players[i];
     if (!p.answered) { // 제한 시간 내 미선택 → 콤보 초기화
@@ -1065,6 +1182,7 @@ function battleEnd() {
   battle.phase = STATE.WAITING;
   battle.shuffleActive = false;
   battleResetShuffleVisuals();
+  battleResetFlickerVisuals();
   battleClearBoards();
   stopBGM();
   playEnd();
@@ -1220,4 +1338,52 @@ function battleResetShuffleVisuals() {
   }
   if (p2dom.shuffleBanner) p2dom.shuffleBanner.classList.remove("show");
   hideShuffleIntro();
+}
+
+/* ---- 2인 Curtain Flicker Round (두 보드 각각 4개 커튼이 독립적으로 깜빡임) ---- */
+
+// 도형 배치 후 호출: 두 보드 8개 커튼을 각자 랜덤 타이밍으로 여닫는다.
+function battleStartCurtainFlicker() {
+  battleResetFlickerVisuals();
+  battle.flickerActive = true;
+  flashBanner(p2dom.shuffleBanner, "👁 순간 집중! 커튼을 노려보세요", 1200);
+
+  for (let i = 0; i < 2; i++) {
+    for (const dir of DIRECTIONS) {
+      const node = boards2[i].options[dir];
+      const c = document.createElement("div");
+      c.className = "curtain flicker"; // 닫힘(가림) 상태로 시작
+      node.appendChild(c);
+      battleScheduleCurtainToggle(i, c);
+    }
+  }
+  playCurtainClose();
+  // 자동 종료 없음 → 각 보드는 자신이 답할 때까지 무한 반복(둘 다 답하면 battleEndQuestion에서 정리)
+}
+
+// 보드 i의 한 커튼을 랜덤 간격으로 여닫는다. 그 보드가 답할 때까지(answered) 멈추지 않고 반복.
+function battleScheduleCurtainToggle(i, curtain) {
+  const tick = () => {
+    if (!battle.flickerActive || battle.players[i].answered) return;
+    curtain.classList.toggle("up");
+    if (curtain.classList.contains("up")) playShutter();
+    battle.flickerTimers.push(setTimeout(tick, randRange(FLICKER_MIN_MS, FLICKER_MAX_MS)));
+  };
+  battle.flickerTimers.push(setTimeout(tick, randRange(0, FLICKER_MAX_MS)));
+}
+
+// 보드 i의 커튼만 열어 결과 확인(상대 보드는 계속 깜빡임 유지)
+function battleRevealBoardFlicker(i) {
+  const curtains = boards2[i].root.querySelectorAll(".curtain.flicker");
+  curtains.forEach((c) => c.classList.add("up"));
+  playCurtainOpen();
+  setTimeout(() => curtains.forEach((c) => c.remove()), 150);
+}
+
+// 남은 커튼/타이머 즉시 정리(라운드 전환·종료 시)
+function battleResetFlickerVisuals() {
+  battle.flickerActive = false;
+  battle.flickerTimers.forEach(clearTimeout);
+  battle.flickerTimers = [];
+  document.querySelectorAll("#screen-play2 .curtain.flicker").forEach((c) => c.remove());
 }
