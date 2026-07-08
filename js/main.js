@@ -274,7 +274,7 @@ function startGame() {
 
 // ---- 목표 표시(게임당 1회) : 색은 무관하므로 중립색으로 렌더 ----
 function renderTarget() {
-  el.targetShape.innerHTML = shapeSVGHex(targetShape, "#f5f6ff");
+  el.targetShape.innerHTML = shapeSVGHex(targetShape, "#1b1b2e");
   el.targetLabel.textContent = SHAPES[targetShape].name; // 도형 이름만
 }
 
@@ -937,7 +937,7 @@ function battleStart() {
 }
 
 function renderTarget2() {
-  p2dom.targetShape.innerHTML = shapeSVGHex(battle.targetShape, "#f5f6ff");
+  p2dom.targetShape.innerHTML = shapeSVGHex(battle.targetShape, "#1b1b2e");
   p2dom.targetLabel.textContent = SHAPES[battle.targetShape].name;
 }
 
