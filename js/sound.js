@@ -1,14 +1,15 @@
 // 사운드 모듈 — Web Audio API로 합성(음원 파일 불필요)
 //  · SE(효과음): spawn(Pop) / correct(Ding) / wrong(Buzz) / end(Finish)
-//  · BGM: 밝고 신나는 아케이드 그루브. 진행될수록 '레이어'가 쌓여 에너지가 커진다.
-//         (긴장감보다 흥·리듬감 중심 / 종료 시 Fade Out)
+//  · BGM: 놀이공원(테마파크) 느낌의 밝고 통통 튀는 아케이드 파티게임 그루브.
+//         닌텐도 파티게임처럼 귀엽고 경쾌한 마림바 멜로디 훅 + 팡파르 브라스.
+//         진행될수록 '레이어'가 쌓이며 에너지가 자연스럽게 상승한다(종료 시 Fade Out).
 //  · SE 볼륨과 BGM 볼륨은 각각 독립된 GainNode로 관리한다.
 //
 //  에너지 단계 (setBgmEnergy(경과초)로 제어, 레이어는 1.2초에 걸쳐 부드럽게 페이드인)
-//   0~10초 : core(밝은 통통 리드 + 킥)            — 가볍고 경쾌
-//   10~25초: + bass + drum(백비트 스네어/오프비트 하이햇) — 에너지 상승
-//   25~35초: + perc(16분 하이햇/클랩)              — 흥분감
-//   35~40초: + climax(옥타브 리드/오픈햇/코드 스탭) + 템포 살짝 ↑ — 클라이맥스
+//   0~10초 : core(통통 튀는 마림바 멜로디 + 부드러운 킥/패드) — 밝고 여유로운 기본 BGM
+//   10~25초: + bass(옥타브 바운스) + drum(백비트 스네어/8분 하이햇) — 점점 빨라지는 에너지
+//   25~35초: + perc(놀이공원 브라스 팡파르 + 클랩 + 16분 셰이커) — 하이라이트 텐션 ↑
+//   35~40초: + climax(옥타브 스파클 + 크래시 심벌 + 오픈햇) + 템포 ↑ — 마지막 스퍼트
 
 let ctx = null;
 let seGain = null;   // 효과음 전용 볼륨
@@ -201,19 +202,80 @@ function snare(dest, when) {
 }
 const hat = (dest, when, dur, peak) => perc(dest, when, dur, "highpass", 8000, peak);
 const clap = (dest, when) => perc(dest, when, 0.1, "bandpass", 1500, 0.2);
-function chordStab(dest, chord, when) {
-  chord.lead.forEach((f) => tone(dest, f, when, 0.12, "sawtooth", 0.07));
+
+// 마림바/벨: 귀엽고 통통 튀는 플럭. 삼각파 기본음 + 옥타브 사인 오버톤(벨 광택).
+function marimba(dest, freq, when, dur, peak) {
+  const c = ac();
+  const t0 = c.currentTime + when;
+  const o = c.createOscillator(), ov = c.createOscillator();
+  const g = c.createGain(), gv = c.createGain();
+  o.type = "triangle"; o.frequency.value = freq;
+  ov.type = "sine"; ov.frequency.value = freq * 2; // 옥타브 위 반짝임
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.linearRampToValueAtTime(peak, t0 + 0.004); // 빠른 어택(플럭)
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  gv.gain.setValueAtTime(0.0001, t0);
+  gv.gain.linearRampToValueAtTime(peak * 0.35, t0 + 0.004);
+  gv.gain.exponentialRampToValueAtTime(0.0001, t0 + dur * 0.5); // 오버톤은 더 빨리 사라짐
+  o.connect(g).connect(dest);
+  ov.connect(gv).connect(dest);
+  o.start(t0); ov.start(t0);
+  o.stop(t0 + dur + 0.02); ov.stop(t0 + dur + 0.02);
+}
+
+// 브라스 스탭: 놀이공원 팡파르. 살짝 디튠한 톱니 스택 + 밝게 열리는 로우패스 엔벨로프.
+function brass(dest, freq, when, dur, peak) {
+  const c = ac();
+  const t0 = c.currentTime + when;
+  const o1 = c.createOscillator(), o2 = c.createOscillator();
+  const f = c.createBiquadFilter(), g = c.createGain();
+  o1.type = "sawtooth"; o1.frequency.value = freq;
+  o2.type = "sawtooth"; o2.frequency.value = freq * 1.006; // 두께감을 주는 디튠
+  f.type = "lowpass";
+  f.frequency.setValueAtTime(freq * 1.5, t0);
+  f.frequency.linearRampToValueAtTime(freq * 6, t0 + 0.05);       // 밝게 '뿜' 열림
+  f.frequency.exponentialRampToValueAtTime(freq * 2.2, t0 + dur);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.linearRampToValueAtTime(peak, t0 + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o1.connect(g); o2.connect(g); g.connect(f).connect(dest);
+  o1.start(t0); o2.start(t0);
+  o1.stop(t0 + dur + 0.02); o2.stop(t0 + dur + 0.02);
+}
+
+// 크래시 심벌: 하이패스 노이즈를 길게 감쇠(하이라이트 액센트).
+function crash(dest, when, peak) {
+  const c = ac();
+  const t0 = c.currentTime + when;
+  const s = c.createBufferSource();
+  s.buffer = noise(); s.loop = true; // 0.4s 버퍼를 루프해 긴 심벌 테일 확보
+  const f = c.createBiquadFilter();
+  f.type = "highpass"; f.frequency.value = 5000;
+  const g = c.createGain();
+  g.gain.setValueAtTime(peak, t0);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.5);
+  s.connect(f).connect(g).connect(dest);
+  s.start(t0); s.stop(t0 + 0.55);
 }
 
 // ---------------- 배경음악(BGM) ----------------
 // 16스텝(16분음표) 루프. I–V–vi–IV(C–G–Am–F)의 밝은 진행.
 const STEPS = 16;
-const BASE_STEP = 0.145;   // rate 1.0에서 16분음표(초) ≈ 103 BPM (댄서블)
+const BASE_STEP = 0.136;   // rate 1.0에서 16분음표(초) ≈ 110 BPM (통통 튀는 파티 템포)
 const PROG = [
   { lead: [261.63, 329.63, 392.00], bass: 130.81 }, // C
   { lead: [293.66, 392.00, 493.88], bass: 98.00 },  // G
   { lead: [329.63, 440.00, 523.25], bass: 110.00 }, // Am
   { lead: [349.23, 440.00, 523.25], bass: 87.31 },  // F
+];
+
+// 통통 튀는 멜로디 훅(16스텝, null=쉼표). C–G–Am–F 코드(4스텝마다 전환) 위를 흐른다.
+// 귀에 남는 살짝 싱코페이션 라인 → 닌텐도 파티게임 특유의 흥얼거리는 느낌.
+const MELODY = [
+  659.25, null, 783.99, 659.25,   // C : E5  .  G5 E5
+  587.33, null, 493.88, 587.33,   // G : D5  .  B4 D5
+  523.25, null, 659.25, 523.25,   // Am: C5  .  E5 C5
+  440.00, 523.25, 440.00, 392.00, // F : A4 C5 A4 G4 → 루프 복귀
 ];
 
 let bgmPlaying = false;
@@ -228,38 +290,39 @@ function bgmScheduleStep(step, time) {
   const rel = time - c.currentTime;
   const chord = PROG[Math.floor(step / 4) % 4];
 
-  // core: 4-on-the-floor 킥 + 통통 튀는 8분 리드(항상)
-  if (step % 4 === 0) kick(layer.core, rel, 0.6);
-  if (step % 2 === 0) {
-    const n = chord.lead[(step / 2) % 3];
-    tone(layer.core, n, rel, 0.15, "triangle", 0.26);
+  // core(항상): 통통 튀는 마림바 멜로디 훅 + 부드러운 킥 + 따뜻한 코드 패드
+  if (step % 4 === 0) kick(layer.core, rel, 0.5);
+  const mnote = MELODY[step];
+  if (mnote) marimba(layer.core, mnote, rel, 0.24, 0.24);
+  if (step % 4 === 0) {
+    // 코드가 바뀔 때 배경을 부드럽게 채우는 사인 패드(아주 은은하게)
+    chord.lead.forEach((f) => tone(layer.core, f, rel, 0.52, "sine", 0.035));
   }
 
-  // bass: 8분 베이스 바운스
+  // bass(10초~): 루트↔옥타브 통통 바운스 베이스
   if (bassOn && step % 2 === 0) {
-    tone(layer.bass, chord.bass, rel, 0.17, "sawtooth", 0.2);
+    const bf = step % 4 === 0 ? chord.bass : chord.bass * 2;
+    tone(layer.bass, bf, rel, 0.16, "sawtooth", 0.2);
   }
 
-  // drum: 백비트 스네어 + 오프비트 클로즈 하이햇
+  // drum(10초~): 백비트 스네어 + 8분 오프비트 하이햇(추진력↑)
   if (drumOn) {
     if (step === 4 || step === 12) snare(layer.drum, rel);
-    if (step % 4 === 2) hat(layer.drum, rel, 0.03, 0.13);
+    if (step % 2 === 1) hat(layer.drum, rel, 0.03, 0.11);
   }
 
-  // perc: 16분 소프트 하이햇 + 클랩 액센트
+  // perc(25초~ 하이라이트): 놀이공원 브라스 팡파르 + 클랩 + 16분 셰이커
   if (percOn) {
     hat(layer.perc, rel, 0.02, 0.05);
     if (step === 7 || step === 15) clap(layer.perc, rel);
+    if (step % 4 === 0) chord.lead.forEach((f) => brass(layer.perc, f, rel, 0.2, 0.055));
   }
 
-  // climax: 옥타브 스파클 리드 + 코드 스탭 + 오픈 하이햇
+  // climax(35초~ 마지막 스퍼트): 옥타브 스파클 + 크래시 심벌 + 오픈 하이햇
   if (climaxOn) {
-    if (step % 2 === 0) {
-      const n = chord.lead[(step / 2) % 3] * 2;
-      tone(layer.climax, n, rel, 0.11, "square", 0.1);
-    }
-    if (step === 0 || step === 8) chordStab(layer.climax, chord, rel);
-    if (step === 6 || step === 14) hat(layer.climax, rel, 0.12, 0.11);
+    if (mnote) tone(layer.climax, mnote * 2, rel, 0.1, "square", 0.09); // 멜로디 옥타브 반짝임
+    if (step === 0) crash(layer.climax, rel, 0.13);                     // 마디 시작 심벌
+    if (step === 6 || step === 14) hat(layer.climax, rel, 0.12, 0.1);   // 오픈 하이햇
   }
 }
 
@@ -283,8 +346,8 @@ function rampLayer(node, target) {
 
 // 경과 시간(초)에 따라 템포·레이어(에너지)를 끌어올린다. main에서 매초 호출.
 export function setBgmEnergy(elapsedSec) {
-  // 템포는 대부분 유지, 후반에만 살짝 상승(흥분감)
-  bgmRate = elapsedSec >= 35 ? 1.10 : elapsedSec >= 25 ? 1.05 : 1.0;
+  // 템포는 여유롭게 시작해 단계마다 조금씩 상승(자연스러운 가속감·마지막 스퍼트)
+  bgmRate = elapsedSec >= 35 ? 1.12 : elapsedSec >= 25 ? 1.06 : elapsedSec >= 10 ? 1.02 : 1.0;
   // 레이어 페이드인(한 번 켜지면 유지)
   if (elapsedSec >= 10 && !bassOn) { bassOn = true; rampLayer(layer.bass, 1); }
   if (elapsedSec >= 10 && !drumOn) { drumOn = true; rampLayer(layer.drum, 1); }
