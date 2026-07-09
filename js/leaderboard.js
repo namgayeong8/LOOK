@@ -1,9 +1,13 @@
 // 리더보드 저장 모듈 — 브라우저 LocalStorage 사용(새로고침 후에도 유지)
 // 정렬: 점수 내림차순, 동점이면 먼저 달성한 기록(ts 작은 것)이 위.
 
-const KEY = "look_leaderboard_v1";
+const KEY = "look_leaderboard_v2"; // v1 → v2: 리더보드 초기화(기존 기록 폐기)
 const NAME_KEY = "look_last_name";
 const MAX_KEEP = 50; // 저장 상한(표시는 Top 10)
+
+// 이전 버전에 남아 있던 리더보드 데이터를 한 번 제거한다.
+// (다른 설정/데이터는 건드리지 않음)
+try { localStorage.removeItem("look_leaderboard_v1"); } catch {}
 
 function readAll() {
   try {
