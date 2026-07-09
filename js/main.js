@@ -36,14 +36,28 @@ import {
 // ---- 설정 ----
 const GAME_TIME = 40;      // 제한 시간(초)
 // 응시(dwell) 유지 시간: 게임 후반으로 갈수록 짧아져 더 빠른 반응을 요구한다.
-// 경과 시간(초) 구간별로 필요한 유지 시간(ms)을 반환한다.
-//   0~20초 : 0.35초 / 20~30초 : 0.27초 / 30~40초 : 0.20초
+// 경과 시간(초) 구간별 목표 유지 시간(ms):
+//   0~10초 : 0.35초 / 10~20초 : 0.27초 / 20~40초 : 0.20초
 // 얼굴 인식·방향 판정·노이즈 필터링(faceControl.js의 SMOOTH)은 그대로 두고,
 // 오직 '확정에 필요한 유지 시간'만 조절한다.
+// 각 구간 값은 유지하되, 경계 부근 약 1초는 선형 보간으로 '자연스럽게' 전환한다.
+const DWELL_CURVE = [
+  [0, 350], [9.5, 350],     // 0~10초 : 0.35초
+  [10.5, 270], [19.5, 270], // 10~20초: 0.27초
+  [20.5, 200], [40, 200],   // 20~40초: 0.20초
+];
 function dwellMs(elapsed) {
-  if (elapsed < 20) return 350;
-  if (elapsed < 30) return 270;
-  return 200;
+  const pts = DWELL_CURVE;
+  let ms = pts[pts.length - 1][1];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [t0, v0] = pts[i], [t1, v1] = pts[i + 1];
+    if (elapsed <= t1) {
+      const r = Math.max(0, Math.min(1, (elapsed - t0) / (t1 - t0)));
+      ms = v0 + (v1 - v0) * r; // 선형 보간
+      break;
+    }
+  }
+  return ms;
 }
 
 // 콤보 점수표: 정답 시 '증가 후 콤보 수'에 따라 획득 점수 결정
