@@ -76,7 +76,8 @@ const SHUFFLE_EVENTS = 2;
 const SHUFFLE_START = 9;      // 시작 직후 방지
 const SHUFFLE_END = 30;       // 라운드가 40초 안에 끝나도록 여유
 const SHUFFLE_MIN_GAP = 4;    // 최소 문제 간격(연속/근접 방지)
-const SHUFFLE_INTRO_MS = 2500; // 시작 안내 오버레이 표시 시간
+const SHUFFLE_INTRO_MS = 2000;      // 첫 번째 Shuffle Round 안내 표시 시간(충분한 설명)
+const SHUFFLE_INTRO_SHORT_MS = 1000; // 두 번째 이후 안내 표시 시간(빠른 진행)
 const SHUFFLE_SHOW_MS = 800;  // 도형 노출(기억) 시간
 const SHUFFLE_SWAP_MS = 2000; // 셔플(교환) 총 시간
 const SHUFFLE_SWAPS = 10;     // 교환 횟수(↑) → 간격 200ms(약 20% 빠름)·난이도 소폭 상승
@@ -794,7 +795,8 @@ function escapeHtml(s) {
    배너 → 도형 노출(기억) → 커튼 닫힘 → 셔플(교환) → 선택 → 커튼 열림/판정
    ============================================================ */
 
-// 1) 시작: 안내 오버레이(2.5초) — 보드는 비운 채 규칙 안내 + 효과음
+// 1) 시작: 안내 오버레이 — 보드는 비운 채 규칙 안내 + 효과음
+//    첫 번째 라운드는 충분한 설명(2초), 두 번째 이후는 빠른 진행(1초)
 function startShuffleRound() {
   clearBoard();          // 도형은 안내 후에 등장
   resetShuffleMapping();
@@ -803,12 +805,15 @@ function startShuffleRound() {
   showShuffleIntro();
   playShuffleStart();
 
+  // shuffleIdx는 startShuffleRound 호출 직전에 증가하므로 첫 라운드에서 1
+  const introMs = shuffleIdx <= 1 ? SHUFFLE_INTRO_MS : SHUFFLE_INTRO_SHORT_MS;
+
   clearTimeout(phaseTimer);
   phaseTimer = setTimeout(() => {
     hideShuffleIntro();  // Fade Out
     clearTimeout(phaseTimer);
     phaseTimer = setTimeout(shuffleRevealShapes, 450); // 페이드아웃 후 도형 등장
-  }, SHUFFLE_INTRO_MS);
+  }, introMs);
 }
 
 // 2) 도형 등장(기억 0.8초) → 3) 커튼 닫힘 → 셔플
@@ -1396,7 +1401,8 @@ function battleEnd() {
 
 /* ---- 2인 Shuffle Round (두 보드 공유 시퀀스, 선택/판정은 각자 독립) ---- */
 
-// 1) 시작: 안내 오버레이(2.5초) — 보드는 비운 채 규칙 안내 + 효과음
+// 1) 시작: 안내 오버레이 — 보드는 비운 채 규칙 안내 + 효과음
+//    첫 번째 라운드는 충분한 설명(2초), 두 번째 이후는 빠른 진행(1초)
 function battleStartShuffle() {
   battleClearBoards();
   battleResetShuffleMapping();
@@ -1407,12 +1413,15 @@ function battleStartShuffle() {
   showShuffleIntro();
   playShuffleStart();
 
+  // battle.shuffleIdx는 battleStartShuffle 호출 직전에 증가하므로 첫 라운드에서 1
+  const introMs = battle.shuffleIdx <= 1 ? SHUFFLE_INTRO_MS : SHUFFLE_INTRO_SHORT_MS;
+
   clearTimeout(battle.phaseTimer);
   battle.phaseTimer = setTimeout(() => {
     hideShuffleIntro();
     clearTimeout(battle.phaseTimer);
     battle.phaseTimer = setTimeout(battleShuffleRevealShapes, 450);
-  }, SHUFFLE_INTRO_MS);
+  }, introMs);
 }
 
 // 2) 도형 등장(기억 0.8초, 두 보드 동일) → 3) 커튼 닫힘 → 셔플
