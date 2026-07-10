@@ -265,14 +265,6 @@ const ht = {
   stage: $("#ht-stage"),
   progress: $("#ht-progress"),
   hint: $("#ht-hint"),
-  overlay: $("#ht-overlay"),
-  ovContent: $("#ht-ov-content"),
-};
-
-// 플레이어별 포인트 색상 (1인 모드는 P1 색상 사용)
-const HT_PLAYER_ACCENT = {
-  1: { accent: "var(--lime)", deep: "var(--lime-deep)" },
-  2: { accent: "var(--sky)",  deep: "var(--sky-deep)" },
 };
 
 let htStep = 0;
@@ -280,8 +272,7 @@ let htHoldStart = 0;
 let htRaf = null;
 let htDone = false;    // 완료(전 단계 끝)됨
 let htReady = false;   // 보정 완료 후 입력 허용
-let htPlayer = 1;      // 2인 모드에서 현재 테스트 중인 플레이어(1/2)
-let htAccent = "var(--lime)"; // 진행 링(ring) 색상 — 플레이어에 따라 변경
+const htAccent = "var(--lime)"; // 진행 링(ring) 색상
 let htSkipped = false; // Skip 버튼으로 테스트를 건너뛰었는지
 let htTimers = [];     // 진행 중인 예약(setTimeout) — Skip 시 일괄 취소
 
@@ -302,6 +293,16 @@ function htClearTimers() {
 function startHeadTest() {
   if (!stream) { show("camera"); return; }
   resumeAudio(); // 사용자 클릭 시점에 오디오 활성화
+
+  if (selectedMode === 2) {
+    // 2인 모드: 고개 테스트 없이 바로 카운트다운 → 대전 시작
+    p2dom.video.srcObject = stream;
+    p2dom.video.play().catch(() => {});
+    show("play2");
+    startCountdown(() => { battleStart(); });
+    return;
+  }
+
   htSkipped = false;
   htClearTimers();
 
@@ -313,25 +314,10 @@ function startHeadTest() {
   show("headtest");
   face.start();
 
-  if (selectedMode === 2) {
-    // 2인 모드: 한 명씩 순서대로 테스트 (Player 1 → Player 2)
-    startPlayerTurn(1);
-  } else {
-    // 1인 모드: 기존과 동일
-    setHtAccent(1);
-    runHeadTestSteps();
-  }
+  runHeadTestSteps();
 }
 
-// 진행 링(ring) 및 오버레이 포인트 색상을 플레이어에 맞춰 설정
-function setHtAccent(player) {
-  const c = HT_PLAYER_ACCENT[player] || HT_PLAYER_ACCENT[1];
-  htAccent = c.accent;
-  ht.overlay.style.setProperty("--ht-accent", c.accent);
-  ht.overlay.style.setProperty("--ht-accent-deep", c.deep);
-}
-
-// 실제 방향 테스트(위→오른쪽→아래→왼쪽) 시작 — 1인/2인 공용
+// 실제 방향 테스트(위→오른쪽→아래→왼쪽) 시작
 function runHeadTestSteps() {
   htStep = 0;
   htHoldStart = 0;
@@ -342,39 +328,6 @@ function runHeadTestSteps() {
   htSetTimeout(() => { face.calibrate(); htReady = true; }, 800);
   cancelAnimationFrame(htRaf);
   htLoop();
-}
-
-/* ============================================================
-   2인 모드 순차 진행 안내 오버레이 (Pop + Fade)
-   ============================================================ */
-// 오버레이를 ms 동안 표시한 뒤 페이드아웃 → done() 호출
-function showHtOverlay(html, ms, done) {
-  ht.ovContent.innerHTML = html;
-  ht.overlay.classList.add("show");
-  htSetTimeout(() => {
-    ht.overlay.classList.remove("show");
-    htSetTimeout(() => done && done(), 420); // 페이드아웃(0.4s) 후 진행
-  }, ms);
-}
-
-// Player n 차례 시작: "🎮 PLAYER n / 준비해주세요!" 약 1초 → 방향 테스트
-function startPlayerTurn(player) {
-  htPlayer = player;
-  htDone = true;               // 안내 중에는 인식 루프 중지
-  htReady = false;
-  cancelAnimationFrame(htRaf);
-  setHtAccent(player);
-  ht.hint.hidden = true;
-  ht.stage.classList.remove("done", "finished");
-  ht.check.classList.remove("show");
-  ht.ring.style.background = "transparent";
-  showHtOverlay(
-    `<div class="ht-ov-emoji">🎮</div>
-     <div class="ht-ov-title">PLAYER ${player}</div>
-     <div class="ht-ov-sub">준비해주세요!</div>`,
-    1000,
-    () => runHeadTestSteps(),
-  );
 }
 
 // 현재 단계의 화살표/문구/진행 표시 갱신
@@ -446,7 +399,7 @@ function headTestStepDone() {
   }, 650);
 }
 
-// 모든 방향 완료 → (모드별) 완료 처리
+// 모든 방향 완료 → 완료 처리
 function finishHeadTest() {
   htDone = true;
   cancelAnimationFrame(htRaf);
@@ -459,12 +412,7 @@ function finishHeadTest() {
   ht.arrow.dataset.dir = "done";
   ht.ring.style.background = "transparent";
 
-  if (selectedMode === 2) {
-    finishHeadTest2P();
-    return;
-  }
-
-  // 1인 모드: 🎉 완료 메시지를 약 1초 보여준 뒤 → 3·2·1·GO! → 게임 시작
+  // 🎉 완료 메시지를 약 1초 보여준 뒤 → 3·2·1·GO! → 게임 시작
   ht.arrow.textContent = "🎉";
   ht.guide.innerHTML = "고개 테스트 완료!<br>잠시 후 게임을 시작합니다.";
   playCorrect();
@@ -473,43 +421,8 @@ function finishHeadTest() {
   }, 1000);
 }
 
-// 2인 모드: 현재 플레이어 완료 오버레이 → 다음 플레이어 또는 전체 완료
-function finishHeadTest2P() {
-  playCorrect();
-  ht.arrow.textContent = "✅";
-  ht.guide.textContent = `PLAYER ${htPlayer} 완료!`;
-
-  if (htPlayer === 1) {
-    // ✅ PLAYER 1 COMPLETE! (약 1초) → Player 2 차례
-    showHtOverlay(
-      `<div class="ht-ov-emoji ht-ov-check">✅</div>
-       <div class="ht-ov-title">PLAYER 1 COMPLETE!</div>`,
-      1000,
-      () => startPlayerTurn(2),
-    );
-  } else {
-    // ✅ PLAYER 2 COMPLETE! (약 1.5초) → 🎉 ALL PLAYERS READY! (약 1.5초) → 카운트다운
-    showHtOverlay(
-      `<div class="ht-ov-emoji ht-ov-check">✅</div>
-       <div class="ht-ov-title">PLAYER 2 COMPLETE!</div>`,
-      1500,
-      () => {
-        setHtAccent(1); // 전체 완료 안내는 기본 포인트 색상
-        playCorrect();
-        showHtOverlay(
-          `<div class="ht-ov-emoji">🎉</div>
-           <div class="ht-ov-title">모든 플레이어 준비 완료!</div>`,
-          1500,
-          () => startCountdown(() => { battleStart(); }),
-        );
-      },
-    );
-  }
-}
-
 /* ============================================================
    Skip — 진행 중인 고개 테스트를 즉시 종료하고 바로 카운트다운으로.
-   2인 모드에서 Player 1/2 어느 시점이든 남은 테스트를 모두 건너뛴다.
    확인 창 없음. 클릭 효과음 + 버튼 튀는 애니메이션.
    ============================================================ */
 function skipHeadTest() {
@@ -524,16 +437,11 @@ function skipHeadTest() {
   resumeAudio();                         // 오디오 활성화(효과음 보장)
   playClick();                           // 클릭 효과음
 
-  // 진행 중이던 오버레이/힌트를 즉시 정리
-  ht.overlay.classList.remove("show");
+  // 진행 중이던 힌트를 즉시 정리
   ht.hint.hidden = true;
 
-  // 바로 3·2·1·GO! → 모드에 맞게 게임 시작
-  if (selectedMode === 2) {
-    startCountdown(() => { battleStart(); });
-  } else {
-    startCountdown(() => { startGame(); });
-  }
+  // 바로 3·2·1·GO! → 게임 시작
+  startCountdown(() => { startGame(); });
 }
 
 /* ============================================================
