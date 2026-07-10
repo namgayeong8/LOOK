@@ -106,6 +106,10 @@ export function playEnd() {              // 게임 종료: Finish
   const notes = [523.25, 659.25, 783.99, 1046.5]; // C5 E5 G5 C6
   notes.forEach((f, i) => tone(seGain, f, i * 0.11, 0.22, "triangle", 0.2));
 }
+export function playClick() {            // UI 버튼 클릭: 짧고 경쾌한 '톡'
+  tone(seGain, 1046.5, 0, 0.05, "triangle", 0.2);
+  tone(seGain, 1568, 0.03, 0.06, "sine", 0.12);
+}
 export function playCountBeep() {        // 카운트다운 3·2·1: 짧고 단단한 비프
   tone(seGain, 680, 0, 0.13, "square", 0.16);
   tone(seGain, 900, 0, 0.09, "sine", 0.1);

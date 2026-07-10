@@ -24,6 +24,7 @@ import {
   playShutter,
   playCountBeep,
   playCountGo,
+  playClick,
 } from "./sound.js";
 import {
   addScore,
@@ -193,6 +194,13 @@ $("#btn-2p").addEventListener("click", () => { selectedMode = 2; show("camera");
 el.btnGrant.addEventListener("click", requestCamera);
 el.btnToHowto.addEventListener("click", () => show("howto"));
 $("#btn-start-game").addEventListener("click", startHeadTest);
+$("#btn-skip-ht").addEventListener("click", (e) => {
+  const b = e.currentTarget;
+  b.classList.remove("clicked");
+  void b.offsetWidth;            // 리플로우로 애니메이션 재시작
+  b.classList.add("clicked");
+  skipHeadTest();
+});
 $("#btn-replay").addEventListener("click", startGame);
 $("#btn-home").addEventListener("click", () => show("start"));
 $("#btn-replay2").addEventListener("click", battleStart);
@@ -274,10 +282,28 @@ let htDone = false;    // 완료(전 단계 끝)됨
 let htReady = false;   // 보정 완료 후 입력 허용
 let htPlayer = 1;      // 2인 모드에서 현재 테스트 중인 플레이어(1/2)
 let htAccent = "var(--lime)"; // 진행 링(ring) 색상 — 플레이어에 따라 변경
+let htSkipped = false; // Skip 버튼으로 테스트를 건너뛰었는지
+let htTimers = [];     // 진행 중인 예약(setTimeout) — Skip 시 일괄 취소
+
+// 고개 테스트 전용 setTimeout: Skip 시 htClearTimers()로 한 번에 정리한다.
+function htSetTimeout(fn, ms) {
+  const id = setTimeout(() => {
+    htTimers = htTimers.filter((t) => t !== id);
+    fn();
+  }, ms);
+  htTimers.push(id);
+  return id;
+}
+function htClearTimers() {
+  htTimers.forEach(clearTimeout);
+  htTimers = [];
+}
 
 function startHeadTest() {
   if (!stream) { show("camera"); return; }
   resumeAudio(); // 사용자 클릭 시점에 오디오 활성화
+  htSkipped = false;
+  htClearTimers();
 
   ht.video.srcObject = stream;
   // 검출은 '보이는' 비디오로 (숨겨진 비디오는 Chrome에서 프레임 정지 가능)
@@ -313,7 +339,7 @@ function runHeadTestSteps() {
   htReady = false;
   renderHeadTestStep();
   // 정면을 볼 시간을 준 뒤 보정 → 이후부터 방향 인식 시작
-  setTimeout(() => { face.calibrate(); htReady = true; }, 800);
+  htSetTimeout(() => { face.calibrate(); htReady = true; }, 800);
   cancelAnimationFrame(htRaf);
   htLoop();
 }
@@ -325,9 +351,9 @@ function runHeadTestSteps() {
 function showHtOverlay(html, ms, done) {
   ht.ovContent.innerHTML = html;
   ht.overlay.classList.add("show");
-  setTimeout(() => {
+  htSetTimeout(() => {
     ht.overlay.classList.remove("show");
-    setTimeout(() => done && done(), 420); // 페이드아웃(0.4s) 후 진행
+    htSetTimeout(() => done && done(), 420); // 페이드아웃(0.4s) 후 진행
   }, ms);
 }
 
@@ -409,7 +435,7 @@ function headTestStepDone() {
   ht.ring.style.background = "transparent";
   playCorrect();
 
-  setTimeout(() => {
+  htSetTimeout(() => {
     htStep++;
     if (htStep >= HT_STEPS.length) {
       finishHeadTest();
@@ -442,7 +468,7 @@ function finishHeadTest() {
   ht.arrow.textContent = "🎉";
   ht.guide.innerHTML = "고개 테스트 완료!<br>잠시 후 게임을 시작합니다.";
   playCorrect();
-  setTimeout(() => {
+  htSetTimeout(() => {
     startCountdown(() => { startGame(); });
   }, 1000);
 }
@@ -478,6 +504,35 @@ function finishHeadTest2P() {
         );
       },
     );
+  }
+}
+
+/* ============================================================
+   Skip — 진행 중인 고개 테스트를 즉시 종료하고 바로 카운트다운으로.
+   2인 모드에서 Player 1/2 어느 시점이든 남은 테스트를 모두 건너뛴다.
+   확인 창 없음. 클릭 효과음 + 버튼 튀는 애니메이션.
+   ============================================================ */
+function skipHeadTest() {
+  if (htSkipped) return;                 // 중복 클릭 무시
+  if (!screens.headtest.classList.contains("active")) return; // 안전장치
+  htSkipped = true;
+  htDone = true;                         // 인식 루프 중지
+  htReady = false;
+  cancelAnimationFrame(htRaf);
+  htClearTimers();                       // 예약된 단계 진행/오버레이 전환 모두 취소
+
+  resumeAudio();                         // 오디오 활성화(효과음 보장)
+  playClick();                           // 클릭 효과음
+
+  // 진행 중이던 오버레이/힌트를 즉시 정리
+  ht.overlay.classList.remove("show");
+  ht.hint.hidden = true;
+
+  // 바로 3·2·1·GO! → 모드에 맞게 게임 시작
+  if (selectedMode === 2) {
+    startCountdown(() => { battleStart(); });
+  } else {
+    startCountdown(() => { startGame(); });
   }
 }
 
